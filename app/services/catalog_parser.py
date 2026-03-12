@@ -14,7 +14,9 @@ from app.services.xlsx_exporter import XlsxExporter
 from app.utils.wildberries import (
     build_product_url,
     build_seller_url,
+    country_matches,
     extract_characteristics,
+    extract_country_of_origin,
     extract_description,
     extract_image_urls,
     extract_pics_count,
@@ -41,31 +43,20 @@ class CatalogParserService:
     async def export_catalog(self, params: CatalogExportParams) -> ExportedWorkbook:
         """Собрать полную XLSX-выгрузку по переданным параметрам запроса."""
 
-        summaries = await self._wb_client.search_catalog(
+        products = await self._collect_products(
             query=params.query,
-            pages=params.pages,
-            limit=params.limit,
+            pages=params.search_pages,
+            limit=params.search_limit,
             sort=params.sort,
         )
-        if not summaries:
-            raise CatalogNotFoundError("По указанному запросу товары не найдены.")
 
-        article_ids = [summary["id"] for summary in summaries if isinstance(summary.get("id"), int)]
-        summaries_by_id = {summary["id"]: summary for summary in summaries if isinstance(summary.get("id"), int)}
-        details_by_id = await self._wb_client.fetch_card_details(article_ids)
-        content_cards_by_id = await self._wb_client.fetch_content_cards(article_ids, summaries_by_id, details_by_id)
+        filtered_products = self._apply_filters(products, params)
+        exported_products = filtered_products[: params.limit]
+        if not exported_products:
+            if not params.has_filters:
+                raise CatalogNotFoundError("По указанному запросу товары не найдены.")
 
-        products = [
-            self._build_product(
-                article_id=article_id,
-                summary=summaries_by_id.get(article_id, {}),
-                detail=details_by_id.get(article_id),
-                content_card=content_cards_by_id.get(article_id),
-            )
-            for article_id in article_ids
-        ]
-
-        workbook_content = self._xlsx_exporter.export(products=products, query=params.query)
+        workbook_content = self._xlsx_exporter.export(products=exported_products, query=params.query)
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename_suffix = slugify_filename(params.query) or "catalog"
         filename = f"wildberries_{filename_suffix}_{timestamp}.xlsx"
@@ -73,7 +64,7 @@ class CatalogParserService:
         return ExportedWorkbook(
             filename=filename,
             content=workbook_content,
-            products_count=len(products),
+            products_count=len(exported_products),
         )
 
     def _build_product(
@@ -109,4 +100,84 @@ class CatalogParserService:
             stock=extract_stock(detail, summary, content_payload),
             rating=extract_rating(detail, summary, content_payload),
             reviews_count=extract_reviews_count(detail, summary, content_payload),
+            production_country=extract_country_of_origin(content_payload, detail, summary),
         )
+
+    def _apply_filters(
+        self,
+        products: list[CatalogProduct],
+        params: CatalogExportParams,
+    ) -> list[CatalogProduct]:
+        """Отфильтровать товары по рейтингу, цене и стране производства."""
+
+        filtered_products = products
+
+        if params.min_price is not None:
+            filtered_products = [
+                product
+                for product in filtered_products
+                if product.price is not None and product.price >= params.min_price
+            ]
+
+        if params.max_price is not None:
+            filtered_products = [
+                product
+                for product in filtered_products
+                if product.price is not None and product.price <= params.max_price
+            ]
+
+        if params.min_rating is not None:
+            filtered_products = [
+                product
+                for product in filtered_products
+                if product.rating is not None and product.rating >= params.min_rating
+            ]
+
+        if params.max_rating is not None:
+            filtered_products = [
+                product
+                for product in filtered_products
+                if product.rating is not None and product.rating <= params.max_rating
+            ]
+
+        if params.production_country is not None:
+            filtered_products = [
+                product
+                for product in filtered_products
+                if country_matches(product.production_country, params.production_country)
+            ]
+
+        return filtered_products
+
+    async def _collect_products(
+        self,
+        query: str,
+        pages: int,
+        limit: int,
+        sort: str,
+    ) -> list[CatalogProduct]:
+        """Собрать нормализованные товары каталога из нескольких источников Wildberries."""
+
+        summaries = await self._wb_client.search_catalog(
+            query=query,
+            pages=pages,
+            limit=limit,
+            sort=sort,
+        )
+        if not summaries:
+            raise CatalogNotFoundError("По указанному запросу товары не найдены.")
+
+        article_ids = [summary["id"] for summary in summaries if isinstance(summary.get("id"), int)]
+        summaries_by_id = {summary["id"]: summary for summary in summaries if isinstance(summary.get("id"), int)}
+        details_by_id = await self._wb_client.fetch_card_details(article_ids)
+        content_cards_by_id = await self._wb_client.fetch_content_cards(article_ids, summaries_by_id, details_by_id)
+
+        return [
+            self._build_product(
+                article_id=article_id,
+                summary=summaries_by_id.get(article_id, {}),
+                detail=details_by_id.get(article_id),
+                content_card=content_cards_by_id.get(article_id),
+            )
+            for article_id in article_ids
+        ]

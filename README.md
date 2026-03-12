@@ -78,6 +78,9 @@ poetry run uvicorn app.main:app --reload
 - `pages` — количество страниц выдачи
 - `limit` — максимум товаров в выгрузке
 - `sort` — сортировка выдачи
+- `min_price` и `max_price` — диапазон цены в рублях
+- `min_rating` и `max_rating` — диапазон рейтинга
+- `production_country` — фильтр по стране производства из списка `Enum` в Swagger UI
 
 Пример запроса:
 
@@ -87,6 +90,18 @@ curl -G "http://127.0.0.1:8000/api/v1/catalog/export" \
   --data-urlencode "pages=1" \
   --data-urlencode "limit=100" \
   -o wildberries_catalog.xlsx
+```
+
+Пример выборки с фильтрами:
+
+```bash
+curl -G "http://127.0.0.1:8000/api/v1/catalog/export" \
+  --data-urlencode "query=пальто из натуральной шерсти" \
+  --data-urlencode "min_price=15000" \
+  --data-urlencode "max_price=30000" \
+  --data-urlencode "min_rating=4.5" \
+  --data-urlencode "production_country=Россия" \
+  -o filtered_wildberries_catalog.xlsx
 ```
 
 Healthcheck:

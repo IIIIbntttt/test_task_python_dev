@@ -8,6 +8,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from app.domain.enums import COUNTRY_FILTER_ALIASES, ProductionCountry
+
 TAG_RE = re.compile(r"<[^>]+>")
 WHITESPACE_RE = re.compile(r"\s+")
 
@@ -224,6 +226,44 @@ def extract_reviews_count(*sources: Mapping[str, Any] | None) -> int:
     return 0
 
 
+def extract_country_of_origin(*sources: Mapping[str, Any] | None) -> str:
+    """Извлечь страну производства товара из доступных payload."""
+
+    for source in sources:
+        if not isinstance(source, Mapping):
+            continue
+
+        for path in (
+            ("country",),
+            ("countryName",),
+            ("countryOrigin",),
+            ("productionCountry",),
+            ("manufacturingCountry",),
+            ("details", "country"),
+        ):
+            value = _get_nested(source, *path)
+            cleaned_value = clean_text(value)
+            if cleaned_value:
+                return cleaned_value
+
+        recursive_value = _find_country_of_origin(source)
+        if recursive_value:
+            return recursive_value
+
+    return ""
+
+
+def country_matches(country_value: str, expected_country: ProductionCountry) -> bool:
+    """Проверить, соответствует ли найденная страна выбранному значению enum."""
+
+    normalized_country_value = _normalize_for_search(country_value)
+    if not normalized_country_value:
+        return False
+
+    aliases = COUNTRY_FILTER_ALIASES.get(expected_country, (expected_country.value,))
+    return any(_normalize_for_search(alias) in normalized_country_value for alias in aliases)
+
+
 def extract_pics_count(*sources: Mapping[str, Any] | None) -> int:
     """Извлечь количество изображений товара из summary, detail или content-данных."""
 
@@ -325,6 +365,45 @@ def _extract_direct_image_urls(content: Mapping[str, Any] | None) -> list[str]:
     return deduped_urls
 
 
+def _find_country_of_origin(node: Any) -> str:
+    """Рекурсивно найти страну производства в структуре характеристик."""
+
+    country_labels = {
+        "страна производства",
+        "страна изготовитель",
+        "страна-производитель",
+        "страна производитель",
+        "страна производства и сборки",
+        "страна происхождения",
+    }
+
+    if isinstance(node, Mapping):
+        label_candidates = (
+            node.get("name"),
+            node.get("title"),
+            node.get("label"),
+            node.get("key"),
+        )
+        if any(_normalize_for_search(label) in country_labels for label in label_candidates):
+            for value_key in ("value", "text", "result", "valueName", "description"):
+                value = _extract_text_value(node.get(value_key))
+                if value:
+                    return value
+
+        for value in node.values():
+            found_value = _find_country_of_origin(value)
+            if found_value:
+                return found_value
+
+    if isinstance(node, list):
+        for item in node:
+            found_value = _find_country_of_origin(item)
+            if found_value:
+                return found_value
+
+    return ""
+
+
 def _collect_image_urls(node: Any) -> list[str]:
     """Рекурсивно извлечь URL изображений из вложенных медиа-структур."""
 
@@ -364,6 +443,25 @@ def _looks_like_image_url(value: str) -> bool:
     )
 
 
+def _extract_text_value(value: Any) -> str:
+    """Преобразовать строку, список строк или вложенный объект в компактный текст."""
+
+    if isinstance(value, str):
+        return clean_text(value)
+
+    if isinstance(value, list):
+        extracted_parts = [part for item in value if (part := _extract_text_value(item))]
+        return ", ".join(extracted_parts)
+
+    if isinstance(value, Mapping):
+        for key in ("name", "title", "value", "text", "description"):
+            nested_value = _extract_text_value(value.get(key))
+            if nested_value:
+                return nested_value
+
+    return ""
+
+
 def _pick_size_name(raw_size: Mapping[str, Any]) -> str:
     """Выбрать наиболее человекочитаемую метку размера из сырого payload размера."""
 
@@ -386,3 +484,12 @@ def _get_nested(source: Mapping[str, Any], *path: str) -> Any:
             return None
         current = current.get(key)
     return current
+
+
+def _normalize_for_search(value: Any) -> str:
+    """Нормализовать строку для нечувствительного к регистру сравнения."""
+
+    if not isinstance(value, str):
+        return ""
+
+    return WHITESPACE_RE.sub(" ", value).strip().lower()

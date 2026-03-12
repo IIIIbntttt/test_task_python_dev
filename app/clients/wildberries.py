@@ -62,7 +62,6 @@ class WildberriesClient:
             ),
             follow_redirects=True,
             headers=self._settings.http_headers,
-            http2=True,
         )
 
     async def close(self) -> None:

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import get_catalog_service
+from app.domain.enums import ProductionCountry
 from app.domain.exceptions import CatalogNotFoundError, WildberriesClientError
 from app.schemas.catalog import CatalogExportParams
 from app.services.catalog_parser import CatalogParserService
@@ -52,11 +53,47 @@ async def export_catalog(
         default="popular",
         description="Сортировка поисковой выдачи Wildberries.",
     ),
+    min_price: float | None = Query(
+        default=None,
+        ge=0,
+        description="Минимальная цена товара в рублях.",
+    ),
+    max_price: float | None = Query(
+        default=None,
+        ge=0,
+        description="Максимальная цена товара в рублях.",
+    ),
+    min_rating: float | None = Query(
+        default=None,
+        ge=0,
+        le=5,
+        description="Минимальный рейтинг товара.",
+    ),
+    max_rating: float | None = Query(
+        default=None,
+        ge=0,
+        le=5,
+        description="Максимальный рейтинг товара.",
+    ),
+    production_country: ProductionCountry | None = Query(
+        default=None,
+        description="Страна производства товара.",
+    ),
     service: CatalogParserService = Depends(get_catalog_service),
 ) -> StreamingResponse:
     """Собрать XLSX из поисковой выдачи Wildberries и отдать его потоком."""
 
-    params = CatalogExportParams(query=query, pages=pages, limit=limit, sort=sort)
+    params = CatalogExportParams(
+        query=query,
+        pages=pages,
+        limit=limit,
+        sort=sort,
+        min_price=min_price,
+        max_price=max_price,
+        min_rating=min_rating,
+        max_rating=max_rating,
+        production_country=production_country,
+    )
     try:
         exported_workbook = await service.export_catalog(params)
     except CatalogNotFoundError as error:

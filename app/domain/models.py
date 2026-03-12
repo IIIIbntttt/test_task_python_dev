@@ -31,6 +31,7 @@ class CatalogProduct:
     stock: int
     rating: float | None
     reviews_count: int
+    production_country: str
 
 
 @dataclass(slots=True)
