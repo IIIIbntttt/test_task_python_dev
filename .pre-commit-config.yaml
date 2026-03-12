@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: poetry run ruff check .
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+
+      - id: mypy
+        name: mypy
+        entry: poetry run mypy app
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
